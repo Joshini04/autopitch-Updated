@@ -1,8 +1,9 @@
+// Stage 2: find decision makers (C-suite, founders, directors) at the given companies.
 const axios = require('axios');
 
 async function findDecisionMakers(domains) {
   console.log(`\n🔍 Stage 2: Finding decision makers for ${domains.length} companies...`);
-  
+
   const allContacts = [];
 
   try {
@@ -26,10 +27,9 @@ async function findDecisionMakers(domains) {
         }
       }
     );
- 
-    
+
     const results = response.data.results || [];
-    
+
     for (const result of results) {
       const person = result.person;
       const company = result.company;
@@ -44,7 +44,6 @@ async function findDecisionMakers(domains) {
         });
       }
     }
-
   } catch (error) {
     console.error('❌ Prospeo error:', error.response?.data || error.message);
   }

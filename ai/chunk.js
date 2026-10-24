@@ -1,5 +1,4 @@
-//ai/chunk.js: cuts long text into overlapping pieces
-
+// Cuts long text into overlapping pieces of about `size` words.
 function chunkText(text, size = 120, overlap = 20) {
   const words = text.trim().split(/\s+/);
   const chunks = [];

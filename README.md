@@ -33,12 +33,35 @@ Seed domain
 - **Frontend:** React + Vite (separate repo)
 - **Hosting:** Render
 
+## Project structure
+
+```
+server.js            Express routes
+ai/
+  llm.js             Gemini text generation
+  embed.js           Gemini embeddings
+  chunk.js           splits notes into overlapping chunks
+  knowledge.js       RAG core: store chunks, similarity search (pgvector)
+  research.js        website text -> company summary
+  qualify.js         lead scoring (structured JSON)
+  draft.js           email drafting grounded in retrieved notes
+  analyzeLead.js     research -> score -> draft -> save, for one lead
+db/
+  pool.js            PostgreSQL connection
+  schema.sql         table definitions
+stages/
+  lookalike.js       similar companies (LLM, with a fallback list)
+  prospeo.js         decision makers via Prospeo
+  emailFilter.js     keep contacts that have an email
+  brevo.js           send an approved email via Brevo
+```
+
 ## Design decisions
 
 - **Human in the loop.** The AI only drafts. Nothing is sent without an explicit approval click.
 - **Dry-run mode.** With `DRY_RUN=true` (the default for deployments), approving a draft records the decision but sends nothing.
 - **Grounded emails.** The prompt tells the model to use only the retrieved notes and company text, and not to claim anything that is not listed.
-- **Built for free tiers.** Research is reused for contacts at the same company, analysis runs in small batches with pauses between calls, and a lead is analyzed only when requested.
+- **Built for free tiers.** Research is reused for contacts at the same company, analysis runs in small batches with pauses between calls and stops early if the AI quota runs out, and a lead is analyzed only when requested.
 
 ## API
 
@@ -53,9 +76,6 @@ Seed domain
 | POST | `/leads/:id/reject` | Reject a lead |
 | POST | `/knowledge` | Add a note: chunk, embed, store |
 | POST | `/knowledge/search` | Retrieve the closest notes for a query |
-| POST | `/research` | Summarize a company from its website |
-| POST | `/qualify` | Score a lead against criteria |
-| POST | `/draft` | Draft an email using retrieved notes |
 
 ## Running locally
 
@@ -76,47 +96,21 @@ GEMINI_EMBED_MODEL=
 DATABASE_URL=
 PROSPEO_API_KEY=
 BREVO_API_KEY=
+SENDER_EMAIL=
+SENDER_NAME=
 DRY_RUN=true
 PORT=3000
 ```
 
-Create the tables:
+`SENDER_EMAIL` must be a sender verified in Brevo. It is only needed when `DRY_RUN=false`.
 
-```sql
-CREATE EXTENSION IF NOT EXISTS vector;
-
-CREATE TABLE IF NOT EXISTS knowledge_chunks (
-  id SERIAL PRIMARY KEY,
-  source_name TEXT,
-  content TEXT NOT NULL,
-  embedding vector(768),
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS leads (
-  id SERIAL PRIMARY KEY,
-  name TEXT,
-  title TEXT,
-  email TEXT,
-  domain TEXT,
-  summary TEXT,
-  score INT,
-  fit TEXT,
-  reasons JSONB,
-  email_draft TEXT,
-  sources_used JSONB,
-  status TEXT DEFAULT 'new',
-  created_at TIMESTAMP DEFAULT NOW()
-);
-```
-
-Start the server:
+Create the tables by running `db/schema.sql` in your database, then start the server:
 
 ```bash
 node server.js
 ```
 
-Then run the frontend from the [autopitch-ui](https://github.com/Joshini04/autopitch-ui) repo and point `VITE_API_URL` at this server.
+Run the frontend from the [autopitch-ui](https://github.com/Joshini04/autopitch-ui) repo and point `VITE_API_URL` at this server.
 
 ## Known limitations
 

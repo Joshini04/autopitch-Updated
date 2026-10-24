@@ -1,11 +1,11 @@
-//ai/knowledge.js: stores chunks and searches them. This is the RAG core.
-
+// The RAG core: stores the user's notes as embeddings and searches them by meaning.
 const pool = require('../db/pool');
 const { chunkText } = require('./chunk');
 const { embedTexts, embedText } = require('./embed');
 
 const toVector = (arr) => `[${arr.join(',')}]`;
 
+// Chunk a note, embed every chunk, and store them in PostgreSQL (pgvector).
 async function addKnowledge(sourceName, text) {
   const chunks = chunkText(text);
   const embeddings = await embedTexts(chunks);
@@ -20,6 +20,8 @@ async function addKnowledge(sourceName, text) {
   return chunks.length;
 }
 
+// Return the stored chunks closest in meaning to the query.
+// "<=>" is pgvector's cosine distance: a smaller distance means a closer match.
 async function searchKnowledge(query, limit = 3) {
   const queryEmbedding = await embedText(query);
 

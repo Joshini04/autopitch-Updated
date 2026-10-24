@@ -1,5 +1,4 @@
-//ai/research.js: fetches the company’s homepage, then summarizes only what’s on it
-
+// Fetches a company's homepage and summarizes only what is written on it.
 const axios = require('axios');
 const { callLLM } = require('./llm');
 

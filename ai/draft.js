@@ -1,12 +1,10 @@
-//the email draft (the full RAG flow)
-//This combines everything you’ve built: research summary, retrieval, and the LLM.
-
-
+// Drafts a personalized email using RAG:
+// the closest notes about the sender are retrieved and used as the only source of facts.
 const { callLLM } = require('./llm');
 const { searchKnowledge } = require('./knowledge');
 
 async function draftEmail(lead, summary, senderName = 'Joshini') {
-  // RAG step: find the parts of MY knowledge closest to this company
+  // Retrieval: find the sender's notes closest in meaning to this company
   const chunks = await searchKnowledge(summary, 3);
   const knowledge = chunks.map(c => `- ${c.content}`).join('\n');
   const sourcesUsed = [...new Set(chunks.map(c => c.source_name))];

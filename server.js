@@ -1,47 +1,27 @@
+// AutoPitch AI: Express API.
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+
 const pool = require('./db/pool');
-const { sendOne } = require('./stages/brevo');
-const { findLookalikeCompanies } = require('./stages/ocean');
+const { findLookalikeCompanies } = require('./stages/lookalike');
 const { findDecisionMakers } = require('./stages/prospeo');
-const { getEmails } = require('./stages/eazyreach');
-const { analyzeLead } = require('./ai/processLead');
-const { researchCompany } = require('./ai/research');
-const { qualifyLead } = require('./ai/qualify');
-const { draftEmail } = require('./ai/draft');
+const { filterWithEmail } = require('./stages/emailFilter');
+const { sendOne } = require('./stages/brevo');
+const { analyzeLead } = require('./ai/analyzeLead');
 const { addKnowledge, searchKnowledge } = require('./ai/knowledge');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
+const isQuotaError = (err) => /429|RESOURCE_EXHAUSTED/.test(String(err.message));
+
 app.get('/health', (req, res) => res.json({ ok: true }));
 
-app.post('/research', async (req, res) => {
-  try {
-    const { lead } = req.body;
-    if (!lead?.domain) return res.status(400).json({ error: 'lead.domain is required' });
-    res.json(await researchCompany(lead));
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Research failed', details: err.message });
-  }
-});
+// ---------- Knowledge base (the notes the AI is allowed to use) ----------
 
-app.post('/qualify', async (req, res) => {
-  try {
-    const { lead, summary, criteria } = req.body;
-    if (!lead || !summary || !criteria) {
-      return res.status(400).json({ error: 'lead, summary and criteria are required' });
-    }
-    res.json(await qualifyLead(lead, summary, criteria));
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Qualification failed', details: err.message });
-  }
-});
-
+// Save a note: chunk it, embed each chunk, store it in pgvector.
 app.post('/knowledge', async (req, res) => {
   try {
     const { sourceName, text } = req.body;
@@ -56,6 +36,7 @@ app.post('/knowledge', async (req, res) => {
   }
 });
 
+// Show which notes are closest in meaning to a query (the retrieval step of RAG).
 app.post('/knowledge/search', async (req, res) => {
   try {
     const { query } = req.body;
@@ -67,54 +48,7 @@ app.post('/knowledge/search', async (req, res) => {
   }
 });
 
-app.post('/draft', async (req, res) => {
-  try {
-    const { lead, summary, senderName } = req.body;
-    if (!lead || !summary) {
-      return res.status(400).json({ error: 'lead and summary are required' });
-    }
-    res.json(await draftEmail(lead, summary, senderName));
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Draft failed', details: err.message });
-  }
-});
-
-app.post('/leads/process', async (req, res) => {
-  try {
-    const { lead, criteria, senderName } = req.body;
-    if (!lead?.domain || !criteria) {
-      return res.status(400).json({ error: 'lead.domain and criteria are required' });
-    }
-
-    const { summary } = await researchCompany(lead);
-    const qualification = await qualifyLead(lead, summary, criteria);
-
-    let draft = null;
-    if (qualification.fit !== 'poor') {
-      draft = await draftEmail(lead, summary, senderName);
-    }
-
-    const { rows } = await pool.query(
-      `INSERT INTO leads
-        (name, title, email, domain, summary, score, fit, reasons, email_draft, sources_used, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-       RETURNING id`,
-      [
-        lead.name, lead.title, lead.email || null, lead.domain, summary,
-        qualification.score, qualification.fit, JSON.stringify(qualification.reasons),
-        draft ? JSON.stringify({ subject: draft.subject, body: draft.body }) : null,
-        draft ? JSON.stringify(draft.sources_used) : null,
-        draft ? 'draft' : 'skipped'
-      ]
-    );
-
-    res.json({ id: rows[0].id, summary, qualification, draft });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Processing failed', details: err.message });
-  }
-});
+// ---------- Leads ----------
 
 app.get('/leads', async (req, res) => {
   try {
@@ -125,6 +59,8 @@ app.get('/leads', async (req, res) => {
   }
 });
 
+// Find similar companies, find their decision makers, save the ones with an email.
+// No AI analysis happens here; leads start as "new".
 app.post('/pipeline/run', async (req, res) => {
   try {
     const { seedDomain } = req.body;
@@ -132,7 +68,7 @@ app.post('/pipeline/run', async (req, res) => {
 
     const companies = await findLookalikeCompanies(seedDomain);
     const contacts = await findDecisionMakers(companies);
-    const withEmails = await getEmails(contacts);
+    const withEmails = filterWithEmail(contacts);
 
     const existing = await pool.query('SELECT email FROM leads WHERE email IS NOT NULL');
     const seen = new Set(existing.rows.map(r => r.email));
@@ -147,6 +83,7 @@ app.post('/pipeline/run', async (req, res) => {
 
     res.json({
       companies: companies.length,
+      domains: companies,
       found: contacts.length,
       withEmail: withEmails.length,
       saved: fresh.length,
@@ -158,6 +95,7 @@ app.post('/pipeline/run', async (req, res) => {
   }
 });
 
+// AI analysis for one lead: research -> score -> email draft.
 app.post('/leads/:id/analyze', async (req, res) => {
   try {
     const { criteria, senderName } = req.body;
@@ -165,10 +103,11 @@ app.post('/leads/:id/analyze', async (req, res) => {
     res.json(await analyzeLead(req.params.id, criteria, senderName));
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Analysis failed', details: err.message });
+    res.status(isQuotaError(err) ? 429 : 500).json({ error: 'Analysis failed', details: err.message });
   }
 });
 
+// AI analysis for the next N unanalyzed leads, spread across different companies.
 app.post('/leads/analyze-batch', async (req, res) => {
   try {
     const { criteria, senderName, count = 5 } = req.body;
@@ -193,18 +132,23 @@ app.post('/leads/analyze-batch', async (req, res) => {
         results.push(await analyzeLead(p.id, criteria, senderName));
       } catch (err) {
         results.push({ id: p.id, error: err.message });
+        if (isQuotaError(err)) break; // stop early when the free AI quota is used up
       }
       await new Promise(resolve => setTimeout(resolve, 4000)); // be gentle with free-tier limits
     }
 
-    res.json({ analyzed: results.length, remaining: rows.length - results.length, results });
+    const done = results.filter(r => !r.error).length;
+    res.json({ analyzed: done, remaining: rows.length - done, results });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Batch failed', details: err.message });
   }
 });
 
+// ---------- Approval and sending ----------
 
+// The user approves the (possibly edited) email. With DRY_RUN anything but "false",
+// nothing is sent; the approval is only recorded.
 app.post('/leads/:id/approve', async (req, res) => {
   try {
     const { subject, body } = req.body;
@@ -229,8 +173,11 @@ app.post('/leads/:id/approve', async (req, res) => {
       [draft, 'sent', lead.id]);
     res.json({ message: `Email sent to ${lead.email}` });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Approve failed', details: err.message });
+    console.error(err.response?.data || err.message);
+    res.status(500).json({
+      error: 'Approve failed',
+      details: err.response?.data ? JSON.stringify(err.response.data) : err.message
+    });
   }
 });
 
@@ -243,7 +190,10 @@ app.post('/leads/:id/reject', async (req, res) => {
   }
 });
 
-console.log('DRY_RUN is:', JSON.stringify(process.env.DRY_RUN));
-
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`AutoPitch AI server running on http://localhost:${PORT}`));
+app.listen(PORT, () => {
+  console.log(`AutoPitch AI server running on http://localhost:${PORT}`);
+  console.log(process.env.DRY_RUN === 'false'
+    ? 'Sending is ON: approving a lead sends a real email.'
+    : 'Dry-run mode: approving a lead does not send anything.');
+});

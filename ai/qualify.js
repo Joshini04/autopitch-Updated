@@ -1,5 +1,4 @@
-//ai/qualify.js: returns structured JSON, not free text
-
+// Scores how well a lead fits the user's criteria. Returns structured JSON, not free text.
 const { callLLM } = require('./llm');
 
 async function qualifyLead(lead, summary, criteria) {

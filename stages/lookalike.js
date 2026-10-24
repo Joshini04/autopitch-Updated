@@ -1,3 +1,5 @@
+// Stage 1: find companies similar to a seed domain.
+// An LLM suggests them; if the call fails, a fixed fallback list is used.
 const { callLLM } = require('../ai/llm');
 
 const FALLBACK = ['braintree.com', 'square.com', 'payoneer.com', 'adyen.com', 'razorpay.com'];
@@ -19,8 +21,7 @@ Use website domains only, with no https:// and no www. Do not include ${seedDoma
       .slice(0, 5);
 
     if (domains.length > 0) {
-      console.log(`✅ Found ${domains.length} lookalike companies!`);
-      console.log(domains);
+      console.log(`✅ Found ${domains.length} lookalike companies:`, domains);
       return domains;
     }
   } catch (err) {
@@ -28,7 +29,7 @@ Use website domains only, with no https:// and no www. Do not include ${seedDoma
   }
 
   const lookalikes = FALLBACK.filter(d => d !== seedDomain);
-  console.log(`✅ Using ${lookalikes.length} fallback companies.`);
+  console.log(`⚠️  Using ${lookalikes.length} fallback companies.`);
   return lookalikes;
 }
 

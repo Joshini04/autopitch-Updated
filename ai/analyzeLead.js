@@ -1,3 +1,4 @@
+// Runs the full AI analysis for one saved lead: research -> score -> draft -> save.
 const pool = require('../db/pool');
 const { researchCompany } = require('./research');
 const { qualifyLead } = require('./qualify');
@@ -8,7 +9,7 @@ async function analyzeLead(id, criteria, senderName) {
   const lead = rows[0];
   if (!lead) throw new Error('Lead not found');
 
-  // reuse the research of a colleague at the same company if we already have it
+  // Reuse the research of a colleague at the same company if we already have it
   const cached = await pool.query(
     'SELECT summary FROM leads WHERE domain = $1 AND summary IS NOT NULL LIMIT 1',
     [lead.domain]
@@ -17,6 +18,7 @@ async function analyzeLead(id, criteria, senderName) {
 
   const qualification = await qualifyLead(lead, summary, criteria);
 
+  // Poor fits get no email draft, which saves AI calls
   let draft = null;
   if (qualification.fit !== 'poor') {
     draft = await draftEmail(lead, summary, senderName);

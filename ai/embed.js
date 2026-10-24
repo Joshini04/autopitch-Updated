@@ -1,10 +1,10 @@
-//ai/embed.js: turns text into number lists
-
+// Turns text into embeddings (lists of 768 numbers that capture meaning).
 const { GoogleGenAI } = require('@google/genai');
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const EMBED_MODEL = process.env.GEMINI_EMBED_MODEL || 'gemini-embedding-001';
 
+// 768 must match the vector(768) column in db/schema.sql
 async function embedTexts(texts) {
   const response = await ai.models.embedContent({
     model: EMBED_MODEL,
